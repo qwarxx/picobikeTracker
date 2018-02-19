@@ -67,8 +67,8 @@
 /* #define USE_FULL_ASSERT    1U */
 
 /* USER CODE BEGIN Private defines */
-#define MAXLEN 90
-#define CIRC_BUF_SZ       128  /* must be power of two */
+#define MAXLEN 			  82 //maximum NMEA message length
+#define CIRC_BUF_SZ       512  /* must be power of two */
 #define DMA_WRITE_PTR 	( (CIRC_BUF_SZ - DMA1_Channel6->CNDTR) & (CIRC_BUF_SZ - 1) ) //Get current DMA writing pointer position
 
 /* USER CODE END Private defines */

@@ -41,6 +41,7 @@
 
 /* USER CODE BEGIN Includes */
 #include "string.h"
+#include "minmea.h"
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -54,8 +55,18 @@ __IO ITStatus UartReady = RESET;
 __IO uint32_t UserButtonStatus = 0; /* set to 1 after User Button interrupt  */
 static uint8_t rx_dma_circ_buf[CIRC_BUF_SZ];
 static uint32_t rd_ptr;
+char OK_FLAG = 0;
+char STAT_FLAG = 0;
+char ERR_FLAG = 0;
+char CONN_FLAG = 0;
+char data_string[75];
+uint8_t pos = 0;
+uint8_t loops = 0;
 uint8_t rxString[MAXLEN];
-uint8_t dataBuf[MAXLEN];
+struct minmea_sentence_rmc frame_rmc;
+struct minmea_sentence_gga frame_gga;
+struct minmea_sentence_gsa frame_gsa;
+struct minmea_sentence_gsa frame_gsv;
 
 /* USER CODE END PV */
 
@@ -64,12 +75,14 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
-static void msgrx_parse(void);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
 extern void initialise_monitor_handles(void);
 void send(char string[]);
+void http_get(char data[]);
+void gprs_connect(void);
+static void msgrx_parse(void);
 //void executeSerialCommand(uint8_t string[]);
 /* USER CODE END PFP */
 
@@ -101,8 +114,6 @@ int main(void) {
 
 	/* USER CODE BEGIN SysInit */
 
-	/* enable printing messages to console */
-
 	/* USER CODE END SysInit */
 
 	/* Initialize all configured peripherals */
@@ -110,6 +121,7 @@ int main(void) {
 	MX_DMA_Init();
 	MX_USART2_UART_Init();
 	/* USER CODE BEGIN 2 */
+	/* enable printing messages to console */
 	initialise_monitor_handles();
 
 	/* Start the receiver */
@@ -118,51 +130,88 @@ int main(void) {
 	rd_ptr = 0;
 
 	printf("Init\n");
-	/* Wait for User push-button press before starting the Communication.
-	 In the meantime, LED2 is blinking */
+
 	HAL_Delay(1000);
 
 	HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-	printf("Start getting Locations!\n");
-	//send("\r\nSerial test");
-	send("\n\rAT+CGPSPWR=1");
-	printf("[SEND] AT+CGPSPWR=1\n");
-	send("\n\rAT+GSN");
-	printf("[SEND] AT+GSN\n");
-	HAL_Delay(100);
-	msgrx_parse();
-	printf(rxString);
+	printf("Start the module!\n");
+	send("\n\rAT+CGPSOUT=0\n\r");
+	printf("[SEND] AT+CGPSOUT=0\n");
+	send("\n\rAT\n\r");
+	printf("[SEND] AT\n");
 
-	HAL_Delay(1000);
-	//printf(rxString);
-	//printf("\n");
-	//printf(rxString);
-	//printf("\n");
+	send("\n\rAT+CGPSPWR=1\n\r");
+	printf("[SEND] AT+CGPSPWR=1\n");
+	//send("\n\rAT+CGPSRST=0\n\r");
+	//printf("[SEND] AT+CGPSRST=0\n");
+	send("\n\rAT+CGPSOUT=255\n\r");
+	printf("[SEND] AT+CGPSOUT=255\n");
+	HAL_Delay(500);
+	msgrx_parse();
 
 	/* USER CODE END 2 */
-
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	while (1) {
-
-		send("\n\rAT+CGPSINF=2");
-		printf("[SEND] AT+CGPSINF=2\n");
-		HAL_Delay(100);
+		uint8_t i = 0;
+		HAL_Delay(2000);
 		msgrx_parse();
-		printf(rxString);
-		printf("\n");
-		HAL_Delay(1000);
-		//printf(rxString);
-		//printf("\n");
+		for (i = 0; i < frame_gga.satellites_tracked; i++) {
+			HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+			HAL_Delay(200);
+			HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+		}
+		printf(
+				"%02i%02i%02i.000,%09.4f,%010.4f,%.1f,%.1f,%i,%.2f,%.2f,%.2f,%02i%02i%02i,%02i\n",
+				frame_rmc.time.hours, frame_rmc.time.minutes,
+				frame_rmc.time.seconds, minmea_tofloat(&frame_rmc.latitude),
+				minmea_tofloat(&frame_rmc.longitude),
+				minmea_tofloat(&frame_gga.hdop),
+				minmea_tofloat(&frame_gga.altitude), frame_gsa.fix_type,
+				minmea_tofloat(&frame_rmc.course),
+				minmea_tofloat(&frame_rmc.speed) * 1.852001,
+				minmea_tofloat(&frame_rmc.speed), frame_rmc.date.day,
+				frame_rmc.date.month, frame_rmc.date.year,
+				frame_gga.satellites_tracked);
+		sprintf(data_string,
+				"%02i%02i%02i.000,%09.4f,%010.4f,%.1f,%.1f,%i,%.2f,%.2f,%.2f,%02i%02i%02i,%02i",
+				frame_rmc.time.hours, frame_rmc.time.minutes,
+				frame_rmc.time.seconds, minmea_tofloat(&frame_rmc.latitude),
+				minmea_tofloat(&frame_rmc.longitude),
+				minmea_tofloat(&frame_gga.hdop),
+				minmea_tofloat(&frame_gga.altitude), frame_gsa.fix_type,
+				minmea_tofloat(&frame_rmc.course),
+				minmea_tofloat(&frame_rmc.speed) * 1.852001,
+				minmea_tofloat(&frame_rmc.speed), frame_rmc.date.day,
+				frame_rmc.date.month, frame_rmc.date.year,
+				frame_gga.satellites_tracked);
+
+		if (frame_gsa.fix_type == 3 || frame_gsa.fix_type == 1) {
+			send("\n\rAT+CGPSOUT=0\n\r");
+			printf("[SEND] AT+CGPSOUT=0\n");
+			printf("[SEND] AT+SAPBR=2,1\n");
+			send("AT+SAPBR=2,1\n\r");
+			if (CONN_FLAG == 0 || CONN_FLAG == 3) {
+				gprs_connect();
+				CONN_FLAG = 0;
+			}
+			http_get(data_string);
+			send("\n\rAT+CGPSOUT=255\n\r");
+			printf("[SEND] AT+CGPSOUT=255\n");
+		}
+		if (loops > 600 && frame_gga.satellites_tracked < 1) {
+			printf("[SEND] AT+CGPSRST=0\n");
+			send("AT+CGPSRST=0\r\n");
+		}
+		loops++;
+
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
 
 	}
 	/* USER CODE END 3 */
-
 }
-
 /**
  * @brief System Clock Configuration
  * @retval None
@@ -257,10 +306,10 @@ static void MX_DMA_Init(void) {
 
 	/* DMA interrupt init */
 	/* DMA1_Channel6_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0, 0);
+	HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 15, 0);
 	HAL_NVIC_EnableIRQ(DMA1_Channel6_IRQn);
 	/* DMA1_Channel7_IRQn interrupt configuration */
-	HAL_NVIC_SetPriority(DMA1_Channel7_IRQn, 0, 0);
+	HAL_NVIC_SetPriority(DMA1_Channel7_IRQn, 15, 0);
 	HAL_NVIC_EnableIRQ(DMA1_Channel7_IRQn);
 
 }
@@ -334,9 +383,10 @@ static void MX_GPIO_Init(void) {
 	 PB12 PB13 PB14 PB15
 	 PB5 PB6 PB7 PB8
 	 PB9 */
-	GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_11
-			| GPIO_PIN_12 | GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15 | GPIO_PIN_5
-			| GPIO_PIN_6 | GPIO_PIN_7 | GPIO_PIN_8 | GPIO_PIN_9;
+	GPIO_InitStruct.Pin =
+	GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_11 | GPIO_PIN_12
+			| GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15 | GPIO_PIN_5 | GPIO_PIN_6
+			| GPIO_PIN_7 | GPIO_PIN_8 | GPIO_PIN_9;
 	GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
 	GPIO_InitStruct.Pull = GPIO_NOPULL;
 	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -380,46 +430,242 @@ static uint8_t msgrx_circ_buf_get(void) {
 static void msgrx_parse(void) {
 
 	uint8_t c = 0;
-	uint8_t i = 0;
-	uint8_t count = 0;
-	uint8_t rxindex = 0;
+	uint16_t i = 0;
+	uint16_t count = 0;
 
-	while (count < MAXLEN) {
-
-		//check if new data is in buffer
+	//check if new data is in buffer
+	while (count < CIRC_BUF_SZ + 1) {
 		if (rd_ptr == DMA_WRITE_PTR) {
 			break;
 		}
 		c = msgrx_circ_buf_get();
 		//find beginning of message
-		if (c == '+') {
-
-			for (i = 0; i < MAXLEN; i++)
+		if (c == '\n') {
+			c = msgrx_circ_buf_get();
+			if (c == '$') {
+				for (i = 0; i < MAXLEN; i++)
 					rxString[i] = 0; // Clear the string buffer
 
-			for (i = 0; i < MAXLEN; i++) {
-				c = msgrx_circ_buf_get();
-				//detect end of message
-				if (c == '\n' || c == '\r') {
-					break;
-				} else {
-					rxString[rxindex] = c;
-					rxindex++;
+				for (i = 0; i < MAXLEN; i++) {
+					//detect end of message
+					if (c == '\n') {
+						rxString[i] = c;
+						rxString[i + 1] = '\0';
+						// detect type of message
+						switch (minmea_sentence_id(rxString, false)) {
+						case MINMEA_SENTENCE_RMC: {
+							if (minmea_parse_rmc(&frame_rmc, rxString)) {
+
+							}
+							break;
+						}
+						case MINMEA_SENTENCE_GGA: {
+							if (minmea_parse_gga(&frame_gga, rxString)) {
+
+							}
+							break;
+						}
+						case MINMEA_SENTENCE_GSA: {
+							if (minmea_parse_gsa(&frame_gsa, rxString)) {
+
+							}
+
+							break;
+						}
+						case MINMEA_SENTENCE_GSV: {
+							if (minmea_parse_gsa(&frame_gsv, rxString)) {
+
+							}
+
+							break;
+						}
+						}
+						break;
+					} else {
+						rxString[i] = c;
+					}
+					c = msgrx_circ_buf_get();
 				}
 
+			} else if (c == '>') {
+				OK_FLAG = 1;
+			} else if (c == 'O') {
+				c = msgrx_circ_buf_get();
+				if (c == 'K') {
+					OK_FLAG = 1;
+				}
+
+			} else if (c == 'E') {
+				c = msgrx_circ_buf_get();
+				if (c == 'R') {
+					c = msgrx_circ_buf_get();
+					if (c == 'R') {
+						ERR_FLAG = 1;
+					}
+				}
+
+			} else if (c == '+') {
+				for (i = 0; i < 20; i++) {
+					c = msgrx_circ_buf_get();
+					if (c == ' ') {
+						c = msgrx_circ_buf_get();
+						if (c == '0') {
+							STAT_FLAG = 0;
+							break;
+						} else if (c == '1') {
+							STAT_FLAG = 1;
+							c = msgrx_circ_buf_get();
+							if (c == ',') {
+								c = msgrx_circ_buf_get();
+								if (c == '1') {
+									CONN_FLAG = 1;
+									break;
+								} else {
+									CONN_FLAG = 0;
+									break;
+								}
+							}
+							else{
+								break;
+							}
+						}
+						else{
+							break;
+						}
+					}
+				}
 			}
 		}
 		count++;
 	}
-}
-/* Prints the supplied string to uart */
-void send(char string[]) {
-	HAL_UART_Transmit(&huart2, (uint8_t*) string, strlen(string), 500);
+	__HAL_UART_FLUSH_DRREGISTER(&huart2);  //clear buffer after reading
 
+}
+
+/* Prints the supplied string to UART and checks for OK*/
+void send(char string[]) {
+	uint8_t i = 0;
+	uint8_t try = 0;
+	HAL_UART_Transmit(&huart2, (uint8_t*) string, strlen(string), 500);
+	for (try = 0; try < 3; try++) {
+		//retry sending 3 times
+		OK_FLAG = 0;
+		ERR_FLAG = 0;
+		STAT_FLAG = 0;
+		CONN_FLAG = 0;
+		if (try == 2) {
+			printf("[ERROR] No OK received\n");
+		}
+		for (i = 0; i < 500; i++) { //wait for 10 seconds for response before retrying
+			msgrx_parse();
+			HAL_Delay(20);
+			if (OK_FLAG == 1 || CONN_FLAG != 0) {
+				break;
+			} else if (ERR_FLAG == 1) {
+				printf("ERROR\n");
+				break;
+			}
+		}
+		if (OK_FLAG == 1 || STAT_FLAG == 1) {
+			break;
+		}
+		HAL_UART_Transmit(&huart2, (uint8_t*) string, strlen(string), 500);
+
+	}
+	OK_FLAG = 0;
+	ERR_FLAG = 0;
+}
+
+void gprs_connect(void) {
+	uint8_t i = 0;
+	send("\n\rAT+CSTT=pinternet.interkom.de\n\r");
+	printf("[SEND] AT+CSTT=pinternet.interkom.de\n");
+	send("\n\rAT+CIICR\n\r");
+	printf("[SEND] AT+CIICR\n");
+	send("\n\rAT+CGATT?\n\r");
+	printf("[SEND] AT+CGATT?\n");
+	if (STAT_FLAG != 1) {
+		send("\n\rAT+CFUN=1,1\n\r");
+		printf("[SEND] AT+CFUN=1,1\n");
+		HAL_Delay(3000);
+
+		send("\n\rAT+CIICR\n\r");
+		printf("[SEND] AT+CIICR\n");
+	}
+
+	printf("[SEND] AT+CGATT?\n");
+	send("\n\rAT+CGATT?\n\r");
+	if (STAT_FLAG != 1) {
+		printf("[SEND] AT+CGATT=1\n");
+
+		send("AT+CGATT=1\n\r");
+
+	}
+	STAT_FLAG = 0;
+	printf("[SEND] AT+CFUN?\n");
+	send("AT+CFUN?\n\r");
+	if (STAT_FLAG != 1) {
+		printf("[SEND] AT+CFUN=1,1\n");
+		send("AT+CFUN=1,1\n\r");
+	}
+	STAT_FLAG = 0;
+
+	for (i = 0; i < 3; i++) {
+		printf("[SEND] AT+SAPBR=2,1\n");
+		send("AT+SAPBR=2,1\n\r");
+		if (CONN_FLAG != 1) {
+			send("AT+SAPBR=3,1,\"Contype\",\"GPRS\"\n\n\r");
+			printf("[SEND] AT+SAPBR=3,1,\"Contype\",\"GPRS\"\n");
+			send("AT+SAPBR=3,1,\"APN\",\"pinternet.interkom.de\"\n\r");
+			printf("[SEND] AT+SAPBR=3,1,\"APN\",\"pinternet.interkom.de\"\n");
+			send("AT+SAPBR=1,1\n\r");
+			printf("[SEND] AT+SAPBR=1,1\n");
+		} else if (CONN_FLAG == 1) {
+			CONN_FLAG = 0;
+
+			send("AT+HTTPINIT\n\r");
+			printf("[SEND] AT+HTTPINIT\n");
+			send("AT+HTTPPARA=\"CID\",1\n\r");
+			printf("[SEND] AT+HTTPPARA=\"CID\",1\n");
+			break;
+		}
+	}
+	send("AT+HTTPINIT\n\r");
+	printf("[SEND] AT+HTTPINIT\n");
+	send("AT+HTTPPARA=\"CID\",1\n\r");
+	printf("[SEND] AT+HTTPPARA=\"CID\",1\n");
+	HAL_Delay(2000);
+
+	STAT_FLAG = 0;
+	CONN_FLAG = 0;
+}
+
+void http_get(char data[]) {
+	char string[strlen(data) + 100];
+	sprintf(string,
+			"AT+HTTPPARA=\"URL\",\"http://updates.opengps.net/index.php?imei=865067025975296&key=beanbean100&data=%s\"\n\r",
+			data);
+	HAL_Delay(1000);
+	send(string);
+	HAL_Delay(1000);
+	printf(string);
+	HAL_Delay(3000);
+	send("AT+HTTPACTION=0\n\r");
+	HAL_Delay(1000);
+	printf("AT+HTTPACTION=0\n");
+	HAL_Delay(500);
+	if (CONN_FLAG != 1) {
+		printf("[SEND] AT+SAPBR=0,1\n");
+		send("AT+SAPBR=0,1\n\r");
+		HAL_Delay(500);
+		printf("[SEND] AT+SAPBR=1,1\n");
+		send("AT+SAPBR=1,1\n\r");
+		HAL_Delay(500);
+	}
 }
 
 /**
- * @brief EXTI line detection callbacks
+ * @brief EXTI line detection callbacksp
  * @param GPIO_Pin: Specifies the pins connected EXTI line
  * @retval None
  */
@@ -437,40 +683,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *UartHandle) {
 
 /* UART RX complete callback */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	/*
-	 __HAL_UART_SEND_REQ(&huart2, UART_RXDATA_FLUSH_REQUEST); // Clear the buffer to prevent overrun
-
-	 int i = 0;
-
-	 if (rxBuffer == '\n' || '\r')
-	 {
-
-	 //printf("[RECEIVED] ");
-	 //printf(rxString);
-	 //printf("\n");
-
-	 if (rxString[0] == 43) {
-	 for (i = 10; i < strlen(rxString) - 4; i++)
-	 dataBuf[i - 10] = rxString[i];
-	 }
-
-	 rxString[rxindex] = 0;
-	 rxindex = 0;
-	 for (i = 0; i < MAXCLISTRING; i++)
-	 rxString[i] = 0; // Clear the string buffer
-	 }
-
-	 else {
-	 rxString[rxindex] = rxBuffer;
-	 rxindex++;
-	 if (rxindex > MAXCLISTRING) {
-	 rxindex = 0;
-	 for (i = 0; i < MAXCLISTRING; i++)
-	 rxString[i] = 0; // Clear the string buffer
-	 printf("[WARNING] Maximum string length exceeded!\n");
-	 }
-	 }
-	 */
+	msgrx_parse();
 }
 
 /* USER CODE END 4 */
@@ -504,7 +717,8 @@ void assert_failed(uint8_t* file, uint32_t line)
 {
 	/* USER CODE BEGIN 6 */
 	/* User can add his own implementation to report the file name and line number,
-	 ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+	 ex: printf("Wrong 	OK_FLAG = 0;
+	 parameters value: file %s on line %d\r\n", file, line) */
 	/* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

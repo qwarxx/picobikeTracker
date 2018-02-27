@@ -63,10 +63,11 @@ char data_string[75];
 uint8_t pos = 0;
 uint8_t loops = 0;
 uint8_t rxString[MAXLEN];
+uint8_t rmc_raw[MAXLEN];
 struct minmea_sentence_rmc frame_rmc;
 struct minmea_sentence_gga frame_gga;
 struct minmea_sentence_gsa frame_gsa;
-struct minmea_sentence_gsa frame_gsv;
+struct minmea_sentence_gsv frame_gsv;
 
 /* USER CODE END PV */
 
@@ -79,9 +80,10 @@ static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
 extern void initialise_monitor_handles(void);
-void send(char string[]);
+void send(char string[]);     //TODO: set up struct to hold return of command
 void http_get(char data[]);
 void gprs_connect(void);
+void blink(uint8_t n);
 static void msgrx_parse(void);
 //void executeSerialCommand(uint8_t string[]);
 /* USER CODE END PFP */
@@ -122,30 +124,38 @@ int main(void) {
 	MX_USART2_UART_Init();
 	/* USER CODE BEGIN 2 */
 	/* enable printing messages to console */
-	initialise_monitor_handles();
+	//initialise_monitor_handles();
+	while (UserButtonStatus == 0) {
+		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, SET);
+		HAL_Delay(50);
+		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, RESET);
+		HAL_Delay(50);
+	}
 
 	/* Start the receiver */
 	__HAL_UART_SEND_REQ(&huart2, UART_RXDATA_FLUSH_REQUEST);
 	HAL_UART_Receive_DMA(&huart2, rx_dma_circ_buf, CIRC_BUF_SZ);
 	rd_ptr = 0;
 
-	printf("Init\n");
+	//printf("Init\n");
+	blink(5);
 
 	HAL_Delay(1000);
+	blink(5);
 
 	HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-	printf("Start the module!\n");
+	//printf("Start the module!\n");
 	send("\n\rAT+CGPSOUT=0\n\r");
-	printf("[SEND] AT+CGPSOUT=0\n");
+	//printf("[SEND] AT+CGPSOUT=0\n");
 	send("\n\rAT\n\r");
-	printf("[SEND] AT\n");
 
+	//printf("[SEND] AT\n");
 	send("\n\rAT+CGPSPWR=1\n\r");
-	printf("[SEND] AT+CGPSPWR=1\n");
+	//printf("[SEND] AT+CGPSPWR=1\n");
 	//send("\n\rAT+CGPSRST=0\n\r");
-	//printf("[SEND] AT+CGPSRST=0\n");
+	////printf("[SEND] AT+CGPSRST=0\n");
 	send("\n\rAT+CGPSOUT=255\n\r");
-	printf("[SEND] AT+CGPSOUT=255\n");
+	//printf("[SEND] AT+CGPSOUT=255\n");
 	HAL_Delay(500);
 	msgrx_parse();
 
@@ -154,54 +164,56 @@ int main(void) {
 	/* USER CODE BEGIN WHILE */
 	while (1) {
 		uint8_t i = 0;
-		HAL_Delay(2000);
+		HAL_Delay(1000);
 		msgrx_parse();
-		for (i = 0; i < frame_gga.satellites_tracked; i++) {
-			HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-			HAL_Delay(200);
-			HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-		}
-		printf(
-				"%02i%02i%02i.000,%09.4f,%010.4f,%.1f,%.1f,%i,%.2f,%.2f,%.2f,%02i%02i%02i,%02i\n",
-				frame_rmc.time.hours, frame_rmc.time.minutes,
-				frame_rmc.time.seconds, minmea_tofloat(&frame_rmc.latitude),
-				minmea_tofloat(&frame_rmc.longitude),
-				minmea_tofloat(&frame_gga.hdop),
-				minmea_tofloat(&frame_gga.altitude), frame_gsa.fix_type,
-				minmea_tofloat(&frame_rmc.course),
-				minmea_tofloat(&frame_rmc.speed) * 1.852001,
-				minmea_tofloat(&frame_rmc.speed), frame_rmc.date.day,
-				frame_rmc.date.month, frame_rmc.date.year,
-				frame_gga.satellites_tracked);
-		sprintf(data_string,
-				"%02i%02i%02i.000,%09.4f,%010.4f,%.1f,%.1f,%i,%.2f,%.2f,%.2f,%02i%02i%02i,%02i",
-				frame_rmc.time.hours, frame_rmc.time.minutes,
-				frame_rmc.time.seconds, minmea_tofloat(&frame_rmc.latitude),
-				minmea_tofloat(&frame_rmc.longitude),
-				minmea_tofloat(&frame_gga.hdop),
-				minmea_tofloat(&frame_gga.altitude), frame_gsa.fix_type,
-				minmea_tofloat(&frame_rmc.course),
-				minmea_tofloat(&frame_rmc.speed) * 1.852001,
-				minmea_tofloat(&frame_rmc.speed), frame_rmc.date.day,
-				frame_rmc.date.month, frame_rmc.date.year,
-				frame_gga.satellites_tracked);
+		HAL_Delay(1000);
 
-		if (frame_gsa.fix_type == 3 || frame_gsa.fix_type == 1) {
+		for (i = 0; i < frame_gsv.total_sats; i++) {
+			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, SET);
+			HAL_Delay(200);
+			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, RESET);
+			HAL_Delay(200);
+			if (i > 3) {
+				break;
+			}
+		}
+		msgrx_parse();
+		//printf(rmc_raw);
+		//printf("  (RAW) \n");
+		/*
+
+		 sprintf(data_string,
+		 "%02i%02i%02i.000,%09.4f,%010.4f,%.1f,%.1f,%i,%.2f,%.2f,%.2f,%02i%02i%02i,%02i",
+		 frame_rmc.time.hours, frame_rmc.time.minutes,
+		 frame_rmc.time.seconds, minmea_tofloat(&frame_rmc.latitude),
+		 minmea_tofloat(&frame_rmc.longitude),
+		 minmea_tofloat(&frame_gga.hdop),
+		 minmea_tofloat(&frame_gga.altitude), frame_gsa.fix_type,
+		 minmea_tofloat(&frame_rmc.course),
+		 minmea_tofloat(&frame_rmc.speed) * 1.852001,
+		 minmea_tofloat(&frame_rmc.speed), frame_rmc.date.day,
+		 frame_rmc.date.month, frame_rmc.date.year,
+		 frame_gga.satellites_tracked);
+		 */
+		if (frame_gsa.fix_type == 3 || frame_gsa.fix_type == 2) {
 			send("\n\rAT+CGPSOUT=0\n\r");
-			printf("[SEND] AT+CGPSOUT=0\n");
-			printf("[SEND] AT+SAPBR=2,1\n");
+			//printf("[SEND] AT+CGPSOUT=0\n"); //Stop GPS Data output to free up serial bus.
+			//printf("[SEND] AT+SAPBR=2,1\n");
 			send("AT+SAPBR=2,1\n\r");
 			if (CONN_FLAG == 0 || CONN_FLAG == 3) {
 				gprs_connect();
 				CONN_FLAG = 0;
 			}
-			http_get(data_string);
+			http_get(rmc_raw);
 			send("\n\rAT+CGPSOUT=255\n\r");
-			printf("[SEND] AT+CGPSOUT=255\n");
+			//printf("[SEND] AT+CGPSOUT=255\n");
 		}
+
+
 		if (loops > 600 && frame_gga.satellites_tracked < 1) {
-			printf("[SEND] AT+CGPSRST=0\n");
+			//printf("[SEND] AT+CGPSRST=0\n");
 			send("AT+CGPSRST=0\r\n");
+			loops = 0;
 		}
 		loops++;
 
@@ -418,6 +430,17 @@ static void MX_GPIO_Init(void) {
 
 /* USER CODE BEGIN 4 */
 
+void blink(uint8_t n) {
+	uint8_t i = 0;
+	for (i = 0; i < n; i++) {
+		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, SET);
+		HAL_Delay(100);
+		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, RESET);
+		if (n != i + 1)
+			HAL_Delay(200);
+	}
+}
+
 static uint8_t msgrx_circ_buf_get(void) {
 	uint8_t c = 0;
 	if (rd_ptr != DMA_WRITE_PTR) {
@@ -443,9 +466,9 @@ static void msgrx_parse(void) {
 		if (c == '\n') {
 			c = msgrx_circ_buf_get();
 			if (c == '$') {
-				for (i = 0; i < MAXLEN; i++)
+				for (i = 0; i < MAXLEN; i++) {
 					rxString[i] = 0; // Clear the string buffer
-
+				}
 				for (i = 0; i < MAXLEN; i++) {
 					//detect end of message
 					if (c == '\n') {
@@ -455,7 +478,11 @@ static void msgrx_parse(void) {
 						switch (minmea_sentence_id(rxString, false)) {
 						case MINMEA_SENTENCE_RMC: {
 							if (minmea_parse_rmc(&frame_rmc, rxString)) {
-
+								for (i = 0; i < MAXLEN; i++) {
+									if (rxString[i] == '\r')
+										break;
+									rmc_raw[i] = rxString[i];
+								}
 							}
 							break;
 						}
@@ -473,7 +500,7 @@ static void msgrx_parse(void) {
 							break;
 						}
 						case MINMEA_SENTENCE_GSV: {
-							if (minmea_parse_gsa(&frame_gsv, rxString)) {
+							if (minmea_parse_gsv(&frame_gsv, rxString)) {
 
 							}
 
@@ -511,6 +538,15 @@ static void msgrx_parse(void) {
 						c = msgrx_circ_buf_get();
 						if (c == '0') {
 							STAT_FLAG = 0;
+							c = msgrx_circ_buf_get();
+							if (c == ',') {
+								c = msgrx_circ_buf_get();
+								if (c == '2') {
+									CONN_FLAG = 2;
+									break;
+								}
+								break;
+							}
 							break;
 						} else if (c == '1') {
 							STAT_FLAG = 1;
@@ -522,14 +558,12 @@ static void msgrx_parse(void) {
 									break;
 								} else {
 									CONN_FLAG = 0;
-									break;
 								}
-							}
-							else{
+
+							} else {
 								break;
 							}
-						}
-						else{
+						} else {
 							break;
 						}
 					}
@@ -554,86 +588,106 @@ void send(char string[]) {
 		STAT_FLAG = 0;
 		CONN_FLAG = 0;
 		if (try == 2) {
-			printf("[ERROR] No OK received\n");
+			//printf("[ERROR] No OK received\n");
+			blink(4);
 		}
-		for (i = 0; i < 500; i++) { //wait for 10 seconds for response before retrying
+		for (i = 0; i < 200; i++) { //wait for 10 seconds for response before retrying
 			msgrx_parse();
-			HAL_Delay(20);
-			if (OK_FLAG == 1 || CONN_FLAG != 0) {
+			HAL_Delay(50);
+			if (OK_FLAG == 1 || CONN_FLAG != 0 || STAT_FLAG == 1) {
+				blink(1);
 				break;
 			} else if (ERR_FLAG == 1) {
-				printf("ERROR\n");
+				//printf("ERROR\n");
+				blink(2);
+				HAL_Delay(500);
+				ERR_FLAG = 0;
+				blink(2);
 				break;
 			}
 		}
-		if (OK_FLAG == 1 || STAT_FLAG == 1) {
+		if (OK_FLAG == 1 || STAT_FLAG == 1 || CONN_FLAG != 0) {
 			break;
 		}
 		HAL_UART_Transmit(&huart2, (uint8_t*) string, strlen(string), 500);
 
 	}
 	OK_FLAG = 0;
-	ERR_FLAG = 0;
+}
+
+void wait_http(void) {		//waits up to 40 seconds for HTTP 200
+	uint8_t i = 0;
+	CONN_FLAG = 0;
+	for (i = 0; i < 200; i++) {
+		msgrx_parse();
+		if (CONN_FLAG == 2)
+			break;
+		HAL_Delay(200);
+
+	}
+	if (CONN_FLAG == 0)
+		//printf("[ERROR] No 200 received\n");
+	CONN_FLAG = 0;
 }
 
 void gprs_connect(void) {
 	uint8_t i = 0;
 	send("\n\rAT+CSTT=pinternet.interkom.de\n\r");
-	printf("[SEND] AT+CSTT=pinternet.interkom.de\n");
+	//printf("[SEND] AT+CSTT=pinternet.interkom.de\n");
 	send("\n\rAT+CIICR\n\r");
-	printf("[SEND] AT+CIICR\n");
+	//printf("[SEND] AT+CIICR\n");
 	send("\n\rAT+CGATT?\n\r");
-	printf("[SEND] AT+CGATT?\n");
+	//printf("[SEND] AT+CGATT?\n");
 	if (STAT_FLAG != 1) {
 		send("\n\rAT+CFUN=1,1\n\r");
-		printf("[SEND] AT+CFUN=1,1\n");
+		//printf("[SEND] AT+CFUN=1,1\n");
 		HAL_Delay(3000);
 
 		send("\n\rAT+CIICR\n\r");
-		printf("[SEND] AT+CIICR\n");
+		//printf("[SEND] AT+CIICR\n");
 	}
 
-	printf("[SEND] AT+CGATT?\n");
+	//printf("[SEND] AT+CGATT?\n");
 	send("\n\rAT+CGATT?\n\r");
 	if (STAT_FLAG != 1) {
-		printf("[SEND] AT+CGATT=1\n");
+		//printf("[SEND] AT+CGATT=1\n");
 
 		send("AT+CGATT=1\n\r");
 
 	}
 	STAT_FLAG = 0;
-	printf("[SEND] AT+CFUN?\n");
+	//printf("[SEND] AT+CFUN?\n");
 	send("AT+CFUN?\n\r");
 	if (STAT_FLAG != 1) {
-		printf("[SEND] AT+CFUN=1,1\n");
+		//printf("[SEND] AT+CFUN=1,1\n");
 		send("AT+CFUN=1,1\n\r");
 	}
 	STAT_FLAG = 0;
 
 	for (i = 0; i < 3; i++) {
-		printf("[SEND] AT+SAPBR=2,1\n");
+		//printf("[SEND] AT+SAPBR=2,1\n");
 		send("AT+SAPBR=2,1\n\r");
 		if (CONN_FLAG != 1) {
 			send("AT+SAPBR=3,1,\"Contype\",\"GPRS\"\n\n\r");
-			printf("[SEND] AT+SAPBR=3,1,\"Contype\",\"GPRS\"\n");
+			//printf("[SEND] AT+SAPBR=3,1,\"Contype\",\"GPRS\"\n");
 			send("AT+SAPBR=3,1,\"APN\",\"pinternet.interkom.de\"\n\r");
-			printf("[SEND] AT+SAPBR=3,1,\"APN\",\"pinternet.interkom.de\"\n");
+			//printf("[SEND] AT+SAPBR=3,1,\"APN\",\"pinternet.interkom.de\"\n");
 			send("AT+SAPBR=1,1\n\r");
-			printf("[SEND] AT+SAPBR=1,1\n");
+			//printf("[SEND] AT+SAPBR=1,1\n");
 		} else if (CONN_FLAG == 1) {
 			CONN_FLAG = 0;
 
 			send("AT+HTTPINIT\n\r");
-			printf("[SEND] AT+HTTPINIT\n");
+			//printf("[SEND] AT+HTTPINIT\n");
 			send("AT+HTTPPARA=\"CID\",1\n\r");
-			printf("[SEND] AT+HTTPPARA=\"CID\",1\n");
+			//printf("[SEND] AT+HTTPPARA=\"CID\",1\n");
 			break;
 		}
 	}
 	send("AT+HTTPINIT\n\r");
-	printf("[SEND] AT+HTTPINIT\n");
+	//printf("[SEND] AT+HTTPINIT\n");
 	send("AT+HTTPPARA=\"CID\",1\n\r");
-	printf("[SEND] AT+HTTPPARA=\"CID\",1\n");
+	//printf("[SEND] AT+HTTPPARA=\"CID\",1\n");
 	HAL_Delay(2000);
 
 	STAT_FLAG = 0;
@@ -642,26 +696,34 @@ void gprs_connect(void) {
 
 void http_get(char data[]) {
 	char string[strlen(data) + 100];
-	sprintf(string,
-			"AT+HTTPPARA=\"URL\",\"http://updates.opengps.net/index.php?imei=865067025975296&key=beanbean100&data=%s\"\n\r",
-			data);
-	HAL_Delay(1000);
-	send(string);
-	HAL_Delay(1000);
-	printf(string);
-	HAL_Delay(3000);
-	send("AT+HTTPACTION=0\n\r");
-	HAL_Delay(1000);
-	printf("AT+HTTPACTION=0\n");
-	HAL_Delay(500);
 	if (CONN_FLAG != 1) {
-		printf("[SEND] AT+SAPBR=0,1\n");
+		//printf("[SEND] AT+SAPBR=0,1\n");
 		send("AT+SAPBR=0,1\n\r");
 		HAL_Delay(500);
-		printf("[SEND] AT+SAPBR=1,1\n");
+		//printf("[SEND] AT+SAPBR=1,1\n");
 		send("AT+SAPBR=1,1\n\r");
 		HAL_Delay(500);
 	}
+	sprintf(string,
+			"AT+HTTPPARA=\"URL\",\"http://picotracker.ga:8080/gprmc/Data?id=bike&code=0xF020&gprmc=%s\"\n\r",
+			data);
+
+	send(string);
+	//printf(string);
+	if (ERR_FLAG == 1) {
+		send("AT+HTTPINIT\n\r");
+		//printf("[SEND] AT+HTTPINIT\n");
+		send("AT+HTTPPARA=\"CID\",1\n\r");
+		//printf("[SEND] AT+HTTPPARA=\"CID\",1\n");
+		ERR_FLAG = 0;
+		HAL_Delay(2000);
+	}
+	HAL_Delay(1000);
+	send("AT+HTTPACTION=0\n\r");
+	//printf("AT+HTTPACTION=0\n");
+	wait_http();
+	HAL_Delay(500);
+
 }
 
 /**
@@ -697,7 +759,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 void _Error_Handler(char *file, int line) {
 	/* USER CODE BEGIN Error_Handler_Debug */
 	/* User can add his own implementation to report the HAL error return state */
-	printf("\r\n[ERROR] Unspecified error");
+	//printf("\r\n[ERROR] Unspecified error");
 	while (1) {
 		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 		HAL_Delay(500);
@@ -717,7 +779,7 @@ void assert_failed(uint8_t* file, uint32_t line)
 {
 	/* USER CODE BEGIN 6 */
 	/* User can add his own implementation to report the file name and line number,
-	 ex: printf("Wrong 	OK_FLAG = 0;
+	 ex: //printf("Wrong 	OK_FLAG = 0;
 	 parameters value: file %s on line %d\r\n", file, line) */
 	/* USER CODE END 6 */
 }
